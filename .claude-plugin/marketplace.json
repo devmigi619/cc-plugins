@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "claude-plugins",
+  "description": "migi's personal Claude Code plugin marketplace",
+  "owner": {
+    "name": "migi",
+    "url": "https://github.com/devmigi619"
+  },
+  "plugins": [
+    {
+      "name": "session",
+      "source": "./plugins/session",
+      "description": "Manage Claude Code sessions with /session: list, hide, unhide, rename, delete.",
+      "category": "productivity"
+    }
+  ]
+}
