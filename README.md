@@ -24,7 +24,7 @@ hook, so it never reaches the model — zero tokens, no round trip.
 /session hidden               List only hidden sessions
 /session hide <id>            Hide from listings (reversible, deletes nothing)
 /session unhide <id>          Unhide
-/session rm <id>              Permanently delete
+/session rm <id> [<id> ...]   Permanently delete one or more sessions
 /session rename <id> <name>   Set a custom title
 /session help                 Show help
 ```
@@ -36,7 +36,12 @@ Notes:
 - `hide` only adds the id to `~/.claude/session-manager-hidden.json`. Session
   files are never touched and stay resumable.
 - `rename` appends a `custom-title` record to the transcript; nothing is rewritten.
-- `rm` refuses to delete the session you are currently in.
+- `rm` deletes everything Claude Code names after the session id: the
+  `projects/<proj>/<id>.jsonl` transcript, its `<id>/` sidecar directory,
+  `session-env/<id>/`, and `file-history/<id>/`. `sessions/<pid>.json` is left
+  alone — it is keyed by pid and cleared on exit.
+- `rm` refuses to delete the session you are currently in. With several ids it
+  deletes the rest and reports what it skipped.
 
 Requires `node` on PATH.
 

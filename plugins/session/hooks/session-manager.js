@@ -88,13 +88,34 @@ const HELP = `/session commands:
   /session hidden                List only hidden sessions
   /session hide <id>             Hide session from listings (reversible, deletes nothing)
   /session unhide <id>           Unhide session
-  /session rm <id>                Permanently delete session
+  /session rm <id> [<id> ...]    Permanently delete sessions, plus their
+                                 session-env and file-history directories
   /session rename <id> <name>    Set a custom title for session
   /session help                   Show this help
 id accepts any unique prefix of the session id.`;
 
 function sortByRecency(a, b) {
   return (b.lastTimestamp || '').localeCompare(a.lastTimestamp || '');
+}
+
+// Everything Claude Code names after a session id. Siblings of projects/, so
+// they're derived from its parent rather than hardcoded to ~/.claude.
+function sessionArtifacts(sessionFile, sessionId, baseDir) {
+  return [
+    sessionFile.replace(/\.jsonl$/, ''),              // projects/<proj>/<id>/  sidecar
+    path.join(baseDir, 'session-env', sessionId),
+    path.join(baseDir, 'file-history', sessionId),
+  ];
+}
+
+// ponytail: sessions/<pid>.json holds a sessionId too, but it's keyed by pid and
+// Claude Code clears it on exit — no dead entries observed, so we leave it alone.
+function deleteSession(m, hidden, baseDir) {
+  fs.unlinkSync(m.file);
+  for (const p of sessionArtifacts(m.file, m.id, baseDir)) {
+    if (fs.existsSync(p)) fs.rmSync(p, { recursive: true, force: true });
+  }
+  hidden.delete(m.id);
 }
 
 function run(prompt, cwd, projectsDir, currentSessionId) {
@@ -165,21 +186,31 @@ function run(prompt, cwd, projectsDir, currentSessionId) {
   }
 
   if (sub === 'rm') {
-    const id = parts[2];
-    if (!id) return 'Usage: /session rm <id>';
-    const matches = findSessionFile(projectsDir, id);
-    if (!matches.length) return `No session found matching id "${id}".`;
-    if (matches.length > 1) return `Ambiguous id "${id}", matches: ${matches.map(m => m.id.slice(0, 12)).join(', ')}. Use a longer prefix.`;
-    const m = matches[0];
-    if (currentSessionId && m.id === currentSessionId) {
-      return `Refusing to delete the session you're currently in (${m.id.slice(0, 8)}). Exit or switch first.`;
+    const ids = parts.slice(2);
+    if (!ids.length) return 'Usage: /session rm <id> [<id> ...]';
+    const baseDir = path.dirname(projectsDir);
+    const deleted = [];
+    const skipped = [];
+    for (const id of ids) {
+      const matches = findSessionFile(projectsDir, id);
+      if (!matches.length) { skipped.push(`${id}: no match`); continue; }
+      if (matches.length > 1) {
+        skipped.push(`${id}: ambiguous (${matches.map(m => m.id.slice(0, 12)).join(', ')})`);
+        continue;
+      }
+      const m = matches[0];
+      if (currentSessionId && m.id === currentSessionId) {
+        skipped.push(`${id}: current session, exit or switch first`);
+        continue;
+      }
+      deleteSession(m, hidden, baseDir);
+      deleted.push(`${m.id.slice(0, 8)} (${m.projDir})`);
     }
-    fs.unlinkSync(m.file);
-    const sideDir = m.file.replace(/\.jsonl$/, '');
-    if (fs.existsSync(sideDir)) fs.rmSync(sideDir, { recursive: true, force: true });
-    hidden.delete(m.id);
-    saveHidden(hidden);
-    return `Deleted session ${m.id.slice(0, 8)} from ${m.projDir}.`;
+    if (deleted.length) saveHidden(hidden);
+    const lines = [];
+    if (deleted.length) lines.push(`Deleted ${deleted.length}: ${deleted.join(', ')}`);
+    if (skipped.length) lines.push(`Skipped ${skipped.length}: ${skipped.join('; ')}`);
+    return lines.join('\n');
   }
 
   if (sub === 'rename') {
@@ -225,48 +256,71 @@ if (process.argv.includes('--selftest')) {
   const assert = require('assert');
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'session-mgr-test-'));
   hiddenFile = path.join(tmp, 'session-manager-hidden.json');  // never the user's real registry
+  // Mirror the real layout: projects/ is a sibling of session-env/ and file-history/,
+  // which is how deleteSession() finds them.
+  const projectsDir = path.join(tmp, 'projects');
   const projA = 'proj-A';
-  const dirA = path.join(tmp, projA);
+  const dirA = path.join(projectsDir, projA);
   fs.mkdirSync(dirA, { recursive: true });
   const id1 = '11111111-aaaa-bbbb-cccc-000000000001';
   const id2 = '22222222-aaaa-bbbb-cccc-000000000002';
+  const id3 = '33333333-aaaa-bbbb-cccc-000000000003';
   fs.writeFileSync(path.join(dirA, id1 + '.jsonl'),
     JSON.stringify({ type: 'custom-title', customTitle: 'alpha', sessionId: id1 }) + '\n' +
     JSON.stringify({ type: 'user', timestamp: '2026-01-01T00:00:00Z' }) + '\n');
   fs.writeFileSync(path.join(dirA, id2 + '.jsonl'),
     JSON.stringify({ type: 'user', timestamp: '2026-01-02T00:00:00Z' }) + '\n');
+  fs.writeFileSync(path.join(dirA, id3 + '.jsonl'),
+    JSON.stringify({ type: 'user', timestamp: '2026-01-03T00:00:00Z' }) + '\n');
 
   // list
-  const sessions = listSessionsInProject(tmp, projA);
-  assert.strictEqual(sessions.length, 2);
+  const sessions = listSessionsInProject(projectsDir, projA);
+  assert.strictEqual(sessions.length, 3);
   assert.strictEqual(sessions.find(s => s.id === id1).title, 'alpha');
 
   // prefix match
-  assert.strictEqual(findSessionFile(tmp, id1.slice(0, 8)).length, 1);
-  assert.strictEqual(findSessionFile(tmp, '1111').length, 1);
+  assert.strictEqual(findSessionFile(projectsDir, id1.slice(0, 8)).length, 1);
+  assert.strictEqual(findSessionFile(projectsDir, '1111').length, 1);
 
   // hide via run(), then verify filtered from project listing but present in hidden listing
   // cwd must sanitize to the project dir name ("proj-A" has no chars the sanitizer touches)
   const projCwd = projA;
-  run(`/session hide ${id1.slice(0, 8)}`, projCwd, tmp, null);
-  const listed = run('/session project', projCwd, tmp, null);
+  run(`/session hide ${id1.slice(0, 8)}`, projCwd, projectsDir, null);
+  const listed = run('/session project', projCwd, projectsDir, null);
   assert(!listed.includes('alpha'), 'hidden session must not appear in default listing');
-  const listedAll = run('/session project all', projCwd, tmp, null);
+  const listedAll = run('/session project all', projCwd, projectsDir, null);
   assert(listedAll.includes('alpha'), 'all flag must include hidden session');
-  const hiddenList = run('/session hidden', projCwd, tmp, null);
+  const hiddenList = run('/session hidden', projCwd, projectsDir, null);
   assert(hiddenList.includes('alpha'));
-  run(`/session unhide ${id1.slice(0, 8)}`, projCwd, tmp, null);
-  const listed2 = run('/session project', projCwd, tmp, null);
+  run(`/session unhide ${id1.slice(0, 8)}`, projCwd, projectsDir, null);
+  const listed2 = run('/session project', projCwd, projectsDir, null);
   assert(listed2.includes('alpha'), 'unhidden session must reappear');
 
-  // rm refuses current session
-  const refused = run(`/session rm ${id1.slice(0,8)}`, tmp, tmp, id1);
-  assert(refused.includes('Refusing'));
+  // rm refuses the current session and leaves it on disk
+  const refused = run(`/session rm ${id1.slice(0, 8)}`, projCwd, projectsDir, id1);
+  assert(refused.includes('current session'), refused);
   assert(fs.existsSync(path.join(dirA, id1 + '.jsonl')));
 
-  // rm deletes otherwise
-  run(`/session rm ${id2.slice(0,8)}`, tmp, tmp, null);
+  // rm takes the transcript plus every directory named after the session
+  const artifacts = [
+    path.join(dirA, id2),                        // projects/<proj>/<id>/ sidecar
+    path.join(tmp, 'session-env', id2),
+    path.join(tmp, 'file-history', id2),
+  ];
+  for (const p of artifacts) fs.mkdirSync(p, { recursive: true });
+  fs.writeFileSync(path.join(tmp, 'file-history', id2, 'snap@v1'), 'x');
+  run(`/session rm ${id2.slice(0, 8)}`, projCwd, projectsDir, null);
   assert(!fs.existsSync(path.join(dirA, id2 + '.jsonl')));
+  for (const p of artifacts) assert(!fs.existsSync(p), `artifact must be gone: ${p}`);
+
+  // multi-id rm: deletes what it can, reports what it can't, in one pass
+  const multi = run(`/session rm ${id3.slice(0, 8)} deadbeef ${id1.slice(0, 8)}`, projCwd, projectsDir, id1);
+  assert(!fs.existsSync(path.join(dirA, id3 + '.jsonl')), 'id3 must be deleted');
+  assert(fs.existsSync(path.join(dirA, id1 + '.jsonl')), 'current session must survive a batch');
+  assert(multi.includes('Deleted 1'), multi);
+  assert(multi.includes('Skipped 2'), multi);
+  assert(multi.includes('no match'), multi);
+  assert(multi.includes('current session'), multi);
 
   fs.rmSync(tmp, { recursive: true, force: true });  // takes hiddenFile with it
   console.log('OK — all session-manager selftest assertions passed');
