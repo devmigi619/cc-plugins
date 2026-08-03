@@ -1,8 +1,10 @@
 #!/usr/bin/env node
-// /session command — list, hide, rename, delete Claude Code sessions.
-// Runs as a UserPromptSubmit hook: intercepts "/session ..." prompts,
-// never forwards them to the model. Hidden sessions are a registry entry
-// (session-manager-hidden.json), not a file move — reversible, no data touched.
+// session-manager — list, hide, rename, delete Claude Code sessions.
+// Runs as a UserPromptSubmit hook: intercepts "/session-manager:<verb>" prompts,
+// never forwards them to the model. The command files under commands/ only
+// register the names; the hook reads the invocation the user typed.
+// Hidden sessions are a registry entry (session-manager-hidden.json), not a file
+// move — reversible, no data touched.
 
 const fs = require('fs');
 const path = require('path');
@@ -82,16 +84,18 @@ function fmtTable(rows, headers) {
   return [line(headers), line(widths.map(w => '-'.repeat(w))), ...rows.map(line)].join('\n');
 }
 
-const HELP = `/session commands:
-  /session project [all]        List sessions in current project (all: include hidden)
-  /session global [all]          List sessions across all projects (all: include hidden)
-  /session hidden                List only hidden sessions
-  /session hide <id>             Hide session from listings (reversible, deletes nothing)
-  /session unhide <id>           Unhide session
-  /session rm <id> [<id> ...]    Permanently delete sessions, plus their
-                                 session-env and file-history directories
-  /session rename <id> <name>    Set a custom title for session
-  /session help                   Show this help
+const NS = 'session-manager';
+
+const HELP = `${NS} commands:
+  /${NS}:list [all]                 Sessions in the current project (all: include hidden)
+  /${NS}:list global [all]          Sessions across every project
+  /${NS}:list hidden                Only hidden sessions
+  /${NS}:hide <id>                  Hide from listings (reversible, deletes nothing)
+  /${NS}:unhide <id>                Unhide
+  /${NS}:remove <id> [<id> ...]     Permanently delete sessions, plus their
+                                    session-env and file-history directories
+  /${NS}:rename <id> <name>         Set a custom title
+  /${NS}:help                       Show this help
 id accepts any unique prefix of the session id.`;
 
 function sortByRecency(a, b) {
@@ -118,25 +122,35 @@ function deleteSession(m, hidden, baseDir) {
   hidden.delete(m.id);
 }
 
+// The hook sees the invocation the user typed, not the command file's body, so
+// this parses "/session-manager:<verb> <args>" straight from the prompt.
+const INVOCATION = new RegExp(`^/?${NS}:(\\S+)\\s*([\\s\\S]*)$`);
+
 function run(prompt, cwd, projectsDir, currentSessionId) {
-  const parts = prompt.trim().split(/\s+/);
-  const sub = parts[1];
+  const m0 = INVOCATION.exec(prompt.trim());
+  if (!m0) return `Not a ${NS} command. Run /${NS}:help.`;
+  const verb = m0[1];
+  const args = m0[2].trim() ? m0[2].trim().split(/\s+/) : [];
   const hidden = loadHidden();
 
-  if (!sub) {
-    return 'Specify a scope: `/session project` or `/session global`. Run `/session help` for all commands.';
-  }
+  if (verb === 'help') return HELP;
 
-  if (sub === 'help') return HELP;
+  if (verb === 'list') {
+    // list [all] | list global [all] | list hidden
+    const scope = args[0] === 'global' || args[0] === 'hidden' ? args[0] : 'project';
+    const showAll = args.includes('all');
 
-  if (sub === 'project' || sub === 'global') {
-    const showAll = parts[2] === 'all';
-    let sessions;
-    if (sub === 'project') {
-      sessions = listSessionsInProject(projectsDir, currentProjectDirName(cwd));
-    } else {
-      sessions = listProjectDirs(projectsDir).flatMap(pd => listSessionsInProject(projectsDir, pd));
+    if (scope === 'hidden') {
+      const all = listProjectDirs(projectsDir).flatMap(pd => listSessionsInProject(projectsDir, pd));
+      const sessions = all.filter(s => hidden.has(s.id)).sort(sortByRecency);
+      if (!sessions.length) return 'No hidden sessions.';
+      const rows = sessions.map(s => [s.id.slice(0, 8), s.title || '(untitled)', s.lastTimestamp || '-', s.projDir]);
+      return fmtTable(rows, ['ID', 'Name', 'Last Active', 'Project']);
     }
+
+    let sessions = scope === 'global'
+      ? listProjectDirs(projectsDir).flatMap(pd => listSessionsInProject(projectsDir, pd))
+      : listSessionsInProject(projectsDir, currentProjectDirName(cwd));
     if (!showAll) sessions = sessions.filter(s => !hidden.has(s.id));
     sessions.sort(sortByRecency);
     if (!sessions.length) return 'No sessions found.';
@@ -150,33 +164,25 @@ function run(prompt, cwd, projectsDir, currentSessionId) {
         s.lastTimestamp || '-',
         s.msgCount,
         flags.join(','),
-        ...(sub === 'global' ? [s.projDir] : []),
+        ...(scope === 'global' ? [s.projDir] : []),
       ];
     });
-    const headers = ['ID', 'Name', 'Last Active', 'Msgs', 'Flag', ...(sub === 'global' ? ['Project'] : [])];
+    const headers = ['ID', 'Name', 'Last Active', 'Msgs', 'Flag', ...(scope === 'global' ? ['Project'] : [])];
     return fmtTable(rows, headers);
   }
 
-  if (sub === 'hidden') {
-    const all = listProjectDirs(projectsDir).flatMap(pd => listSessionsInProject(projectsDir, pd));
-    const sessions = all.filter(s => hidden.has(s.id)).sort(sortByRecency);
-    if (!sessions.length) return 'No hidden sessions.';
-    const rows = sessions.map(s => [s.id.slice(0, 8), s.title || '(untitled)', s.lastTimestamp || '-', s.projDir]);
-    return fmtTable(rows, ['ID', 'Name', 'Last Active', 'Project']);
-  }
-
-  if (sub === 'hide' || sub === 'unhide') {
-    const id = parts[2];
-    if (!id) return `Usage: /session ${sub} <id>`;
+  if (verb === 'hide' || verb === 'unhide') {
+    const id = args[0];
+    if (!id) return `Usage: /${NS}:${verb} <id>`;
     const matches = findSessionFile(projectsDir, id);
     if (!matches.length) return `No session found matching id "${id}".`;
     if (matches.length > 1) return `Ambiguous id "${id}", matches: ${matches.map(m => m.id.slice(0, 12)).join(', ')}. Use a longer prefix.`;
     const fullId = matches[0].id;
-    if (sub === 'hide') {
+    if (verb === 'hide') {
       if (hidden.has(fullId)) return `Session ${fullId.slice(0, 8)} already hidden.`;
       hidden.add(fullId);
       saveHidden(hidden);
-      return `Hid session ${fullId.slice(0, 8)}. Still resumable, just filtered from listings. Undo: /session unhide ${fullId.slice(0, 8)}`;
+      return `Hid session ${fullId.slice(0, 8)}. Still resumable, just filtered from listings. Undo: /${NS}:unhide ${fullId.slice(0, 8)}`;
     } else {
       if (!hidden.has(fullId)) return `Session ${fullId.slice(0, 8)} isn't hidden.`;
       hidden.delete(fullId);
@@ -185,9 +191,9 @@ function run(prompt, cwd, projectsDir, currentSessionId) {
     }
   }
 
-  if (sub === 'rm') {
-    const ids = parts.slice(2);
-    if (!ids.length) return 'Usage: /session rm <id> [<id> ...]';
+  if (verb === 'remove') {
+    const ids = args;
+    if (!ids.length) return `Usage: /${NS}:remove <id> [<id> ...]`;
     const baseDir = path.dirname(projectsDir);
     const deleted = [];
     const skipped = [];
@@ -213,10 +219,10 @@ function run(prompt, cwd, projectsDir, currentSessionId) {
     return lines.join('\n');
   }
 
-  if (sub === 'rename') {
-    const id = parts[2];
-    const newName = parts.slice(3).join(' ');
-    if (!id || !newName) return 'Usage: /session rename <id> <name>';
+  if (verb === 'rename') {
+    const id = args[0];
+    const newName = args.slice(1).join(' ');
+    if (!id || !newName) return `Usage: /${NS}:rename <id> <name>`;
     const matches = findSessionFile(projectsDir, id);
     if (!matches.length) return `No session found matching id "${id}".`;
     if (matches.length > 1) return `Ambiguous id "${id}", matches: ${matches.map(m => m.id.slice(0, 12)).join(', ')}. Use a longer prefix.`;
@@ -225,7 +231,7 @@ function run(prompt, cwd, projectsDir, currentSessionId) {
     return `Renamed session ${m.id.slice(0, 8)} to "${newName}".`;
   }
 
-  return `Unknown /session command "${sub}". Run /session help.`;
+  return `Unknown command "${verb}". Run /${NS}:help.`;
 }
 
 module.exports = { run, findSessionFile, listSessionsInProject, listProjectDirs, currentProjectDirName, fmtTable };
@@ -238,7 +244,7 @@ if (require.main === module && !process.argv.includes('--selftest')) {
     try {
       const data = JSON.parse(input);
       const prompt = (data.prompt || '').trim();
-      if (!/^\/session\b/.test(prompt)) { process.exit(0); return; }
+      if (!INVOCATION.test(prompt)) { process.exit(0); return; }
       const cwd = data.cwd || process.cwd();
       const currentSessionId = data.transcript_path
         ? path.basename(data.transcript_path, '.jsonl')
@@ -285,19 +291,19 @@ if (process.argv.includes('--selftest')) {
   // hide via run(), then verify filtered from project listing but present in hidden listing
   // cwd must sanitize to the project dir name ("proj-A" has no chars the sanitizer touches)
   const projCwd = projA;
-  run(`/session hide ${id1.slice(0, 8)}`, projCwd, projectsDir, null);
-  const listed = run('/session project', projCwd, projectsDir, null);
+  run(`/session-manager:hide ${id1.slice(0, 8)}`, projCwd, projectsDir, null);
+  const listed = run('/session-manager:list', projCwd, projectsDir, null);
   assert(!listed.includes('alpha'), 'hidden session must not appear in default listing');
-  const listedAll = run('/session project all', projCwd, projectsDir, null);
+  const listedAll = run('/session-manager:list all', projCwd, projectsDir, null);
   assert(listedAll.includes('alpha'), 'all flag must include hidden session');
-  const hiddenList = run('/session hidden', projCwd, projectsDir, null);
+  const hiddenList = run('/session-manager:list hidden', projCwd, projectsDir, null);
   assert(hiddenList.includes('alpha'));
-  run(`/session unhide ${id1.slice(0, 8)}`, projCwd, projectsDir, null);
-  const listed2 = run('/session project', projCwd, projectsDir, null);
+  run(`/session-manager:unhide ${id1.slice(0, 8)}`, projCwd, projectsDir, null);
+  const listed2 = run('/session-manager:list', projCwd, projectsDir, null);
   assert(listed2.includes('alpha'), 'unhidden session must reappear');
 
   // rm refuses the current session and leaves it on disk
-  const refused = run(`/session rm ${id1.slice(0, 8)}`, projCwd, projectsDir, id1);
+  const refused = run(`/session-manager:remove ${id1.slice(0, 8)}`, projCwd, projectsDir, id1);
   assert(refused.includes('current session'), refused);
   assert(fs.existsSync(path.join(dirA, id1 + '.jsonl')));
 
@@ -309,12 +315,12 @@ if (process.argv.includes('--selftest')) {
   ];
   for (const p of artifacts) fs.mkdirSync(p, { recursive: true });
   fs.writeFileSync(path.join(tmp, 'file-history', id2, 'snap@v1'), 'x');
-  run(`/session rm ${id2.slice(0, 8)}`, projCwd, projectsDir, null);
+  run(`/session-manager:remove ${id2.slice(0, 8)}`, projCwd, projectsDir, null);
   assert(!fs.existsSync(path.join(dirA, id2 + '.jsonl')));
   for (const p of artifacts) assert(!fs.existsSync(p), `artifact must be gone: ${p}`);
 
   // multi-id rm: deletes what it can, reports what it can't, in one pass
-  const multi = run(`/session rm ${id3.slice(0, 8)} deadbeef ${id1.slice(0, 8)}`, projCwd, projectsDir, id1);
+  const multi = run(`/session-manager:remove ${id3.slice(0, 8)} deadbeef ${id1.slice(0, 8)}`, projCwd, projectsDir, id1);
   assert(!fs.existsSync(path.join(dirA, id3 + '.jsonl')), 'id3 must be deleted');
   assert(fs.existsSync(path.join(dirA, id1 + '.jsonl')), 'current session must survive a batch');
   assert(multi.includes('Deleted 1'), multi);

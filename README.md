@@ -15,18 +15,18 @@ Update later with `/plugin marketplace update`.
 
 ### session-manager
 
-Manage Claude Code sessions from the prompt with `/session`. Runs inside a `UserPromptSubmit`
+Manage Claude Code sessions from the prompt. Runs inside a `UserPromptSubmit`
 hook, so it never reaches the model — zero tokens, no round trip.
 
 ```
-/session project [all]        List sessions in the current project (all: include hidden)
-/session global [all]         List sessions across all projects
-/session hidden               List only hidden sessions
-/session hide <id>            Hide from listings (reversible, deletes nothing)
-/session unhide <id>          Unhide
-/session rm <id> [<id> ...]   Permanently delete one or more sessions
-/session rename <id> <name>   Set a custom title
-/session help                 Show help
+/session-manager:list [all]              Sessions in this project (all: include hidden)
+/session-manager:list global [all]       Sessions across every project
+/session-manager:list hidden             Only hidden sessions
+/session-manager:hide <id>               Hide from listings (reversible, deletes nothing)
+/session-manager:unhide <id>             Unhide
+/session-manager:remove <id> [<id> ...]  Permanently delete one or more sessions
+/session-manager:rename <id> <name>      Set a custom title
+/session-manager:help                    Show help
 ```
 
 `<id>` accepts any unique prefix of a session id.
@@ -36,12 +36,15 @@ Notes:
 - `hide` only adds the id to `~/.claude/session-manager-hidden.json`. Session
   files are never touched and stay resumable.
 - `rename` appends a `custom-title` record to the transcript; nothing is rewritten.
-- `rm` deletes everything Claude Code names after the session id: the
+- `remove` deletes everything Claude Code names after the session id: the
   `projects/<proj>/<id>.jsonl` transcript, its `<id>/` sidecar directory,
   `session-env/<id>/`, and `file-history/<id>/`. `sessions/<pid>.json` is left
   alone — it is keyed by pid and cleared on exit.
-- `rm` refuses to delete the session you are currently in. With several ids it
+- `remove` refuses to delete the session you are currently in. With several ids it
   deletes the rest and reports what it skipped.
+
+The `commands/*.md` files only register the names. The hook reads the invocation
+the user typed, so there is no intermediate command text to keep in sync.
 
 Requires `node` on PATH.
 
