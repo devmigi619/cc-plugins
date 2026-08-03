@@ -47,10 +47,6 @@ Requires `node` on PATH.
 
 ## Development
 
-Sources live in this repo. The copies under `~/.claude/plugins/` are extracted
-per commit — edits there are discarded on the next update, so change things
-here and push.
-
 ```
 node plugins/session-manager/hooks/session-manager.js --selftest
 ```
