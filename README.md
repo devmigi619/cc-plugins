@@ -1,12 +1,12 @@
-# claude-plugins
+# cc-plugins
 
 migi's personal [Claude Code](https://code.claude.com) plugin marketplace.
 
 ## Install
 
 ```
-/plugin marketplace add devmigi619/claude-plugins
-/plugin install session-manager@claude-plugins
+/plugin marketplace add devmigi619/cc-plugins
+/plugin install session-manager@cc-plugins
 ```
 
 Update later with `/plugin marketplace update`.
