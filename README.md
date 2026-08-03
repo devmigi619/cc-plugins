@@ -6,16 +6,16 @@ migi's personal [Claude Code](https://code.claude.com) plugin marketplace.
 
 ```
 /plugin marketplace add devmigi619/claude-plugins
-/plugin install session@claude-plugins
+/plugin install session-manager@claude-plugins
 ```
 
 Update later with `/plugin marketplace update`.
 
 ## Plugins
 
-### session
+### session-manager
 
-Manage Claude Code sessions from the prompt. Runs inside a `UserPromptSubmit`
+Manage Claude Code sessions from the prompt with `/session`. Runs inside a `UserPromptSubmit`
 hook, so it never reaches the model — zero tokens, no round trip.
 
 ```
@@ -52,5 +52,5 @@ per commit — edits there are discarded on the next update, so change things
 here and push.
 
 ```
-node plugins/session/hooks/session-manager.js --selftest
+node plugins/session-manager/hooks/session-manager.js --selftest
 ```

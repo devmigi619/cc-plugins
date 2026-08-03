@@ -8,8 +8,8 @@
   },
   "plugins": [
     {
-      "name": "session",
-      "source": "./plugins/session",
+      "name": "session-manager",
+      "source": "./plugins/session-manager",
       "description": "Manage Claude Code sessions with /session: list, hide, unhide, rename, delete.",
       "category": "productivity"
     }

@@ -1,5 +1,5 @@
 {
-  "name": "session",
+  "name": "session-manager",
   "version": "1.0.0",
   "description": "List, hide, unhide, rename, or delete Claude Code sessions via /session. Runs entirely inside a UserPromptSubmit hook, so it never reaches the model and costs zero tokens.",
   "author": {
