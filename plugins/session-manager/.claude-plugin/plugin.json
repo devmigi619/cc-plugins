@@ -5,6 +5,5 @@
   "author": {
     "name": "migi",
     "url": "https://github.com/devmigi619"
-  },
-  "hooks": "./hooks/hooks.json"
+  }
 }
