@@ -92,8 +92,7 @@ const HELP = `${NS} commands:
   /${NS}:list hidden                Only hidden sessions
   /${NS}:hide <id>                  Hide from listings (reversible, deletes nothing)
   /${NS}:unhide <id>                Unhide
-  /${NS}:remove <id> [<id> ...]     Permanently delete sessions, plus their
-                                    session-env and file-history directories
+  /${NS}:remove <id> [<id> ...]     Delete sessions and their leftover directories
   /${NS}:rename <id> <name>         Set a custom title
   /${NS}:help                       Show this help
 id accepts any unique prefix of the session id.`;
