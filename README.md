@@ -25,6 +25,9 @@ hook, so it never reaches the model — zero tokens, no round trip.
 /session-manager:hide <id>               Hide from listings (reversible, deletes nothing)
 /session-manager:unhide <id>             Unhide
 /session-manager:remove <id> [<id> ...]  Permanently delete one or more sessions
+/session-manager:remove untitled [global] [confirm]
+                                          Delete all untitled sessions (project by default;
+                                          omit confirm to preview, hidden ones are skipped)
 /session-manager:rename <id> <name>      Set a custom title
 /session-manager:help                    Show help
 ```
@@ -42,6 +45,9 @@ Notes:
   alone — it is keyed by pid and cleared on exit.
 - `remove` refuses to delete the session you are currently in. With several ids it
   deletes the rest and reports what it skipped.
+- `remove untitled` previews the delete list; nothing is touched until `confirm` is
+  passed (anywhere in the args). Hidden untitled sessions are skipped — hiding one
+  means keep it, just filter it from listings.
 
 The `commands/*.md` files only register the names. The hook reads the invocation
 the user typed, so there is no intermediate command text to keep in sync.

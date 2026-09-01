@@ -1,6 +1,6 @@
 {
   "name": "session-manager",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "List, hide, unhide, rename, or delete Claude Code sessions. Runs entirely inside a UserPromptSubmit hook, so it never reaches the model and costs zero tokens.",
   "author": {
     "name": "migi",

@@ -204,7 +204,11 @@ function run(prompt, cwd, projectsDir, currentSessionId) {
       ids = scope.filter(s => !s.title && !hidden.has(s.id)).map(s => s.id);
       if (!ids.length) return 'No untitled sessions.';
       if (!confirmed) {
-        return `Would delete ${ids.length} untitled session${ids.length === 1 ? '' : 's'}: ${ids.map(i => i.slice(0, 8)).join(', ')}\nRun again with "confirm" to delete.`;
+        const willDelete = ids.filter(id => id !== currentSessionId);
+        const lines = ids.map(id => id === currentSessionId
+          ? `${id.slice(0, 8)} (current session, will be skipped)`
+          : id.slice(0, 8));
+        return `Would delete ${willDelete.length} untitled session${willDelete.length === 1 ? '' : 's'}: ${lines.join(', ')}\nRun again with "confirm" to delete.`;
       }
     }
     if (!ids.length) return `Usage: /${NS}:remove <id> [<id> ...] | /${NS}:remove untitled [global] confirm`;
@@ -355,6 +359,11 @@ if (process.argv.includes('--selftest')) {
   assert(preview.includes(id6.slice(0, 8)), preview);
   assert(!preview.includes(id7.slice(0, 8)), 'hidden untitled session must not appear in preview: ' + preview);
   assert(fs.existsSync(path.join(dirA, id6 + '.jsonl')), 'preview alone must not delete anything');
+
+  // preview count must match what confirm will actually delete, not the raw match count
+  const previewWithCurrent = run('/session-manager:remove untitled', projCwd, projectsDir, id6);
+  assert(previewWithCurrent.includes('Would delete 0'), previewWithCurrent);
+  assert(previewWithCurrent.includes(`${id6.slice(0, 8)} (current session, will be skipped)`), previewWithCurrent);
 
   const skippedCurrent = run('/session-manager:remove untitled confirm', projCwd, projectsDir, id6);
   assert(fs.existsSync(path.join(dirA, id6 + '.jsonl')), 'current session must survive an untitled sweep');
