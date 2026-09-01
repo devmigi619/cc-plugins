@@ -93,6 +93,9 @@ const HELP = `${NS} commands:
   /${NS}:hide <id>                  Hide from listings (reversible, deletes nothing)
   /${NS}:unhide <id>                Unhide
   /${NS}:remove <id> [<id> ...]     Delete sessions and their leftover directories
+  /${NS}:remove untitled [global] [confirm]
+                                    Delete all untitled sessions (current project unless
+                                    global; omit confirm to preview, hidden ones are skipped)
   /${NS}:rename <id> <name>         Set a custom title
   /${NS}:help                       Show this help
 id accepts any unique prefix of the session id.`;
@@ -191,8 +194,20 @@ function run(prompt, cwd, projectsDir, currentSessionId) {
   }
 
   if (verb === 'remove') {
-    const ids = args;
-    if (!ids.length) return `Usage: /${NS}:remove <id> [<id> ...]`;
+    // 'confirm' can appear anywhere in args, so strip it before reading positional args.
+    let ids = args.filter(a => a !== 'confirm');
+    const confirmed = args.includes('confirm');
+    if (ids[0] === 'untitled') {
+      const scope = ids[1] === 'global'
+        ? listProjectDirs(projectsDir).flatMap(pd => listSessionsInProject(projectsDir, pd))
+        : listSessionsInProject(projectsDir, currentProjectDirName(cwd));
+      ids = scope.filter(s => !s.title && !hidden.has(s.id)).map(s => s.id);
+      if (!ids.length) return 'No untitled sessions.';
+      if (!confirmed) {
+        return `Would delete ${ids.length} untitled session${ids.length === 1 ? '' : 's'}: ${ids.map(i => i.slice(0, 8)).join(', ')}\nRun again with "confirm" to delete.`;
+      }
+    }
+    if (!ids.length) return `Usage: /${NS}:remove <id> [<id> ...] | /${NS}:remove untitled [global] confirm`;
     const baseDir = path.dirname(projectsDir);
     const deleted = [];
     const skipped = [];
@@ -326,6 +341,47 @@ if (process.argv.includes('--selftest')) {
   assert(multi.includes('Skipped 2'), multi);
   assert(multi.includes('no match'), multi);
   assert(multi.includes('current session'), multi);
+
+  // remove untitled: preview by default, deletes only on confirm, skips hidden and current
+  const id6 = '66666666-aaaa-bbbb-cccc-000000000006';
+  const id7 = '77777777-aaaa-bbbb-cccc-000000000007'; // hidden + untitled — must survive
+  for (const id of [id6, id7]) {
+    fs.writeFileSync(path.join(dirA, id + '.jsonl'), JSON.stringify({ type: 'user', timestamp: '2026-01-04T00:00:00Z' }) + '\n');
+  }
+  run(`/session-manager:hide ${id7.slice(0, 8)}`, projCwd, projectsDir, null);
+
+  const preview = run('/session-manager:remove untitled', projCwd, projectsDir, null);
+  assert(preview.includes('Would delete 1'), preview);
+  assert(preview.includes(id6.slice(0, 8)), preview);
+  assert(!preview.includes(id7.slice(0, 8)), 'hidden untitled session must not appear in preview: ' + preview);
+  assert(fs.existsSync(path.join(dirA, id6 + '.jsonl')), 'preview alone must not delete anything');
+
+  const skippedCurrent = run('/session-manager:remove untitled confirm', projCwd, projectsDir, id6);
+  assert(fs.existsSync(path.join(dirA, id6 + '.jsonl')), 'current session must survive an untitled sweep');
+  assert(skippedCurrent.includes('current session'), skippedCurrent);
+
+  const swept = run('/session-manager:remove untitled confirm', projCwd, projectsDir, null);
+  assert(swept.includes('Deleted 1'), swept);
+  assert(!fs.existsSync(path.join(dirA, id6 + '.jsonl')), 'id6 must be deleted');
+  assert(fs.existsSync(path.join(dirA, id7 + '.jsonl')), 'hidden untitled session must survive the sweep');
+
+  const noneLeft = run('/session-manager:remove untitled', projCwd, projectsDir, null);
+  assert.strictEqual(noneLeft, 'No untitled sessions.', noneLeft);
+
+  // global scope reaches every project; 'confirm' works regardless of position
+  const projB = 'proj-B';
+  const dirB = path.join(projectsDir, projB);
+  fs.mkdirSync(dirB, { recursive: true });
+  const id9 = '99999999-aaaa-bbbb-cccc-000000000009';
+  const id10 = 'a0a0a0a0-aaaa-bbbb-cccc-000000000010';
+  for (const id of [id9, id10]) {
+    fs.writeFileSync(path.join(dirB, id + '.jsonl'), JSON.stringify({ type: 'user', timestamp: '2026-01-05T00:00:00Z' }) + '\n');
+  }
+  const globalSwept = run('/session-manager:remove untitled confirm global', projCwd, projectsDir, null);
+  assert(globalSwept.includes('Deleted 2'), globalSwept);
+  assert(!fs.existsSync(path.join(dirB, id9 + '.jsonl')), 'id9 must be deleted via global sweep');
+  assert(!fs.existsSync(path.join(dirB, id10 + '.jsonl')), 'id10 must be deleted via global sweep');
+  assert(fs.existsSync(path.join(dirA, id7 + '.jsonl')), 'hidden untitled session must still survive after global sweep');
 
   fs.rmSync(tmp, { recursive: true, force: true });  // takes hiddenFile with it
   console.log('OK — all session-manager selftest assertions passed');
